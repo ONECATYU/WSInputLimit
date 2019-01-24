@@ -2,14 +2,17 @@
 Pod::Spec.new do |s|
 
 s.name             = "WSInputLimit"
-s.version          = "0.0.1"
+s.version          = "0.0.2"
 s.summary          = "UITextView/UITextField Input Limit"
 s.description  = <<-DESC
                     * 支持禁止emoji输入
                     * 支持最大可输入字符数量限制
                     * 支持限制仅输入数字
+                    * 支持限制仅输入中文
+                    * 支持限制仅输入英文字母
                     * 支持小数样式输入限制
                     * 支持小数点位数限制
+                    * 支持自定义正则式方式输入
                     DESC
 s.homepage         = "https://github.com/ONECATYU/WSInputLimit"
 s.license          = { :type => "MIT", :file => "LICENSE" }

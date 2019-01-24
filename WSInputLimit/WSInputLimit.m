@@ -1,188 +1,173 @@
 //
 //  WSInputLimit.m
-//  UITextView+LimitInput
+//  LimitInput
 //
-//  Created by 余汪送 on 2018/8/16.
-//  Copyright © 2018年 capsule. All rights reserved.
+//  Created by 余汪送 on 2019/1/24.
+//  Copyright © 2019 capsule. All rights reserved.
 //
 
 #import "WSInputLimit.h"
 #import <objc/runtime.h>
 
-typedef void(^_EnumerateCompletion)(NSInteger count, NSInteger length, NSString *filterText);
+NSString *const WSInputLimitOnlyNumbersPattern = @"[0-9]+";
+NSString *const WSInputLimitOnlyChinesePattern = @"[\u4e00-\u9fa5]+";
+NSString *const WSInputLimitOnlyLetterPattern = @"[A-Za-z]+";
+NSString *const WSInputLimitFilterEmojiPattern = @"[^\\u0020-\\u007E\\u00A0-\\u00BE\\u2E80-\\uA4CF\\uF900-\\uFAFF\\uFE30-\\uFE4F\\uFF00-\\uFFEF\\u0080-\\u009F\\u2000-\\u201f\r\n]";
+
+static inline NSString *WSInputLimitDecimaStylePattern(NSInteger decimalPlace) {
+    return [NSString stringWithFormat:@"([1-9][0-9]*|0)(\\.)?([0-9]{1,%ld})?", MAX(1, decimalPlace)];
+}
 
 @interface WSInputLimit ()
-@property (nonatomic, weak) UITextField *textField;
-@property(nonatomic, weak) UITextView *textView;
-@property(nonatomic, assign) NSInteger currentCharacterCount;
+
+@property (nonatomic, weak, readonly) UITextField *textField;
+@property (nonatomic, weak, readonly) UITextView *textView;
+
 @end
 
 @implementation WSInputLimit
 
-@synthesize currentCharacterNum = _currentCharacterNum;
-
-- (void)dealloc {
+- (void)dealloc
+{
     [[NSNotificationCenter defaultCenter] removeObserver:self];
 }
 
-#pragma mark setter
-- (void)setTextField:(UITextField *)textField {
-    _textField = textField;
-    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(textFieldTextDidChange:) name:UITextFieldTextDidChangeNotification object:nil];
-}
-
-- (void)setTextView:(UITextView *)textView {
-    _textView = textView;
-    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(textViewTextDidChange:) name:UITextViewTextDidChangeNotification object:nil];
-}
-
-#pragma mark getter
-- (NSInteger)currentCharacterNum {
-    return _currentCharacterCount;
-}
-
-- (NSInteger)canEnterCharacter {
-    return MAX(0, _maxCharacter - _currentCharacterCount);
-}
-
-- (NSInteger)decimalPlace {
-    if (_decimalPlace < 1) {
-        _decimalPlace = 2;
+- (instancetype)initWithTextField:(UITextField *)textField {
+    if (self = [super init]) {
+        _textField = textField;
+        
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(textFieldTextDidChange:) name:UITextFieldTextDidChangeNotification object:_textField];
     }
-    return _decimalPlace;
+    return self;
 }
 
-- (NSCharacterSet *)emojiSet {
-    static NSMutableCharacterSet *emojiSet;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        emojiSet = [[NSMutableCharacterSet alloc] init];
-        // U+FE00-FE0F (Variation Selectors)
-        [emojiSet addCharactersInRange:NSMakeRange(0xFE00, 0xFE0F - 0xFE00 + 1)];
-        // U+2100-27BF
-        [emojiSet addCharactersInRange:NSMakeRange(0x2100, 0x27BF - 0x2100 + 1)];
-        // U+1D000-1F9FF
-        [emojiSet addCharactersInRange:NSMakeRange(0x1D000, 0x1F9FF - 0x1D000 + 1)];
-    });
-    
-    return emojiSet;
+- (instancetype)initWithTextView:(UITextView *)textView {
+    if (self = [super init]) {
+        _textView = textView;
+        
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(textViewTextDidChange:) name:UITextViewTextDidChangeNotification object:_textView];
+    }
+    return self;
 }
 
 #pragma mark textFieldTextDidChange
 - (void)textFieldTextDidChange:(NSNotification *)notifi {
-    if (_disable) return;
-    if (!_textField) return;
-    UITextField *currentTF = notifi.object;
-    if (_textField != currentTF) return;
-    
-    UITextRange *markedTextRange = [_textField markedTextRange];
-    UITextPosition *position = [_textField positionFromPosition:markedTextRange.start offset:0];
-    if (markedTextRange && position) return;
-    
-    __weak typeof(self) weakSelf = self;
-    [self filterInputText:_textField.text completion:^(NSString *resultText) {
-        UITextRange* selectedRange = weakSelf.textField.selectedTextRange;
-        weakSelf.textField.text = resultText;
-        weakSelf.textField.selectedTextRange = selectedRange;
-    }];
+    if (_disable) {
+        return;
+    }
+    UITextField *textField = notifi.object;
+    if (textField == _textField) {
+        UITextRange *markedTextRange = [_textField markedTextRange];
+        UITextPosition *position = [_textField positionFromPosition:markedTextRange.start offset:0];
+        if (markedTextRange && position) {
+            return;
+        }
+        
+        NSString *result = [self handleText:_textField.text];
+        UITextRange* selectedRange = _textField.selectedTextRange;
+        _textField.text = result;
+        _textField.selectedTextRange = selectedRange;
+    }
 }
 
 #pragma mark textViewTextDidChange
 - (void)textViewTextDidChange:(NSNotification *)notifi {
-    if (_disable) return;
-    if (!_textView) return;
-    UITextView *currentTextView = notifi.object;
-    if (_textView != currentTextView) return;
-    
-    UITextRange *markedTextRange = [_textView markedTextRange];
-    UITextPosition *position = [_textView positionFromPosition:markedTextRange.start offset:0];
-    if (markedTextRange && position) return;
-    
-    __weak typeof(self) weakSelf = self;
-    [self filterInputText:_textView.text completion:^(NSString *resultText) {
-        NSRange selectedRange = weakSelf.textView.selectedRange;
-        weakSelf.textView.text = resultText;
-        weakSelf.textView.selectedRange = NSMakeRange(selectedRange.location, 0);
-    }];
+    if (_disable) {
+        return;
+    }
+    UITextView *textView = notifi.object;
+    if (textView == _textView) {
+        UITextRange *markedTextRange = [_textView markedTextRange];
+        UITextPosition *position = [_textView positionFromPosition:markedTextRange.start offset:0];
+        if (markedTextRange && position) {
+            return;
+        }
+        
+        NSString *result = [self handleText:_textView.text];
+        NSRange selectedRange = _textView.selectedRange;
+        _textView.text = result;
+        _textView.selectedRange = NSMakeRange(selectedRange.location, 0);
+    }
 }
 
-#pragma mark helper
-- (void)filterInputText:(NSString *)text completion:(void(^)(NSString *resultText))completion {
-    __weak typeof(self) weakSelf = self;
-    [self enumerateSubstringsFromString:text ompletion:^(NSInteger count, NSInteger length, NSString *filterText) {
-        NSString *resultText = filterText;
-        NSInteger maxNum = MAX(0, weakSelf.maxCharacter);
-        weakSelf.currentCharacterCount = count;
-        if (maxNum > 0 && weakSelf.currentCharacterCount > maxNum) {
-            resultText = [filterText substringToIndex:length];
-        }
-        if (completion) {
-            completion(resultText);
-        }
-    }];
+- (NSString *)handleText:(NSString *)text {
+    if (_onlyNumbers) {
+        NSString *result = [self subStringFromText:text withPattern:WSInputLimitOnlyNumbersPattern];
+        return result;
+    }
+    
+    if (_onlyChinese) {
+        NSString *result = [self subStringFromText:text withPattern:WSInputLimitOnlyChinesePattern];
+        return result;
+    }
+    
+    if (_onlyLetter) {
+        NSString *result = [self subStringFromText:text withPattern:WSInputLimitOnlyLetterPattern];
+        return result;
+    }
+    
+    if (_decimaStyle) {
+        NSString *pattern = WSInputLimitDecimaStylePattern(_decimalPlace);
+        NSString *result = [self subStringFromText:text withPattern:pattern];
+        return result;
+    }
+    
+    if (_allowPattern) {
+        NSString *result = [self subStringFromText:text withPattern:_allowPattern];
+        return result;
+    }
+    
+    NSString *filterPattern = _filterPattern;
+    if (_disableEmoji) {
+        filterPattern = WSInputLimitFilterEmojiPattern;
+    }
+    if (filterPattern) {
+        NSRegularExpression *regex = [[NSRegularExpression alloc]initWithPattern:filterPattern options:0 error:NULL];
+        NSString *result = [regex stringByReplacingMatchesInString:text
+                                                           options:0
+                                                             range:NSMakeRange(0, text.length)
+                                                      withTemplate:@""];
+        result = [self lengthHandle:result];
+        return result;
+    }
+    
+    NSString *result = [self lengthHandle:text];
+    return result;
 }
 
-- (void)enumerateSubstringsFromString:(NSString *)text ompletion:(_EnumerateCompletion)completion
-{
-    __block NSInteger count = 0;
-    __block NSInteger length = 0;
+- (NSString *)subStringFromText:(NSString *)string withPattern:(NSString *)pattern {
+    NSRange range = [string rangeOfString:pattern
+                                  options:NSRegularExpressionSearch
+                                    range:NSMakeRange(0, string.length)];
+    NSString *result = @"";
+    if (range.location != NSNotFound) {
+        result = [string substringWithRange:range];
+    }
+    result = [self lengthHandle:result];
+    return result;
+}
+
+- (NSString *)lengthHandle:(NSString *)text {
     __block NSString *filterText = @"";
-    NSInteger maxNum = MAX(0, _maxCharacter);
-    
+    __block NSInteger currentChatNum = 0;
+    NSInteger maxCharacterNumber = _maxCharacterNumber;
     [text enumerateSubstringsInRange:NSMakeRange(0, text.length)
                              options:NSStringEnumerationByComposedCharacterSequences
                           usingBlock:^(NSString * _Nullable substring, NSRange substringRange, NSRange enclosingRange, BOOL * _Nonnull stop) {
-                              count ++;
-                              if (maxNum > 0 && count > maxNum) {
+                              if (maxCharacterNumber > 0 && currentChatNum >= maxCharacterNumber) {
                                   *stop = YES;
                               } else {
-                                  length += substringRange.length;
-                              }
-                              if ([self enumerateString:filterText inRange:substringRange replacementText:substring]) {
                                   filterText = [filterText stringByAppendingString:substring];
+                                  currentChatNum ++;
                               }
                           }];
-    
-    if (completion) {
-        completion(count, length, filterText);
-    }
-}
-
-- (BOOL)enumerateString:(NSString *)string inRange:(NSRange)range replacementText:(NSString *)text {
-    if (_decimaStyle) {
-        if (![self validateRegex:@"^[0-9]*$" toString:text] && ![text isEqualToString:@"."]) {
-            return NO;
-        }
-        if ([string isEqualToString:@"0"] && ![text isEqualToString:@"."]) {
-            return NO;
-        }
-        if (([string isEqualToString:@""] || [string containsString:@"."]) &&
-            [text isEqualToString:@"."]) {
-            return NO;
-        }
-        NSString *str = [string stringByAppendingString:text];
-        NSRange _range = [str rangeOfString:@"."];
-        if (_range.location != NSNotFound) {
-            NSInteger l = str.length - _range.location - 1;
-            if (l > self.decimalPlace) {
-                return NO;
-            }
-        }
-    } else if (_onlyNumbers) {
-        return [self validateRegex:@"^[0-9]*$" toString:text];
-    } else if (_disableEmoji) {
-        return [text rangeOfCharacterFromSet:[self emojiSet]].location == NSNotFound;
-    }
-    
-    return YES;
-}
-
-- (BOOL)validateRegex:(NSString *)regex toString:(NSString *)string {
-    NSPredicate *predicate = [NSPredicate predicateWithFormat:@"SELF MATCHES %@",regex];
-    return [predicate evaluateWithObject:string];
+    _currentCharNumber = currentChatNum;
+    _canEnterCharNumber = MAX(0, _maxCharacterNumber - _currentCharNumber);
+    return filterText;
 }
 
 @end
+
 
 
 @implementation UITextView (WSInputLimit)
@@ -190,8 +175,7 @@ typedef void(^_EnumerateCompletion)(NSInteger count, NSInteger length, NSString 
 - (WSInputLimit *)limit {
     WSInputLimit *limit = objc_getAssociatedObject(self, _cmd);
     if (!limit) {
-        limit = [[WSInputLimit alloc]init];
-        limit.textView = self;
+        limit = [[WSInputLimit alloc]initWithTextView:self];
         objc_setAssociatedObject(self, _cmd, limit, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
     return limit;
@@ -204,8 +188,7 @@ typedef void(^_EnumerateCompletion)(NSInteger count, NSInteger length, NSString 
 - (WSInputLimit *)limit {
     WSInputLimit *limit = objc_getAssociatedObject(self, _cmd);
     if (!limit) {
-        limit = [[WSInputLimit alloc]init];
-        limit.textField = self;
+        limit = [[WSInputLimit alloc]initWithTextField:self];
         objc_setAssociatedObject(self, _cmd, limit, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
     return limit;
