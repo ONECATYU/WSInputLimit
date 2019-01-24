@@ -17,12 +17,12 @@
     
     /// 控制输入小数样式
     textView.limit.decimaStyle = YES;
-    /// 控制小数g位数
+    /// 控制小数位数
     textView.limit.decimalPlace = 2;
     
-    /// 过滤输入中的输入(即数字不能输入)
+    /// 过滤输入中的数字(即数字不能输入)
     textView.limit.filterPattern = @"[0-9]+";
-    /// 只允许输入输入
+    /// 只允许输入数字
     textView.limit.allowPattern = @"[0-9]+";
     
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(textViewTextDidChange:) name:UITextViewTextDidChangeNotification object:textView];
